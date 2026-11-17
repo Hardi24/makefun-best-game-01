@@ -6,7 +6,9 @@
 
 LUMEN DRIFT — a lantern-keeper survival game: gather lumen orbs, burn the void wisps with your lantern aura, and survive 10 waves until dawn. Built by an AI agent for make.fun's "Make the best game" bounty, $1,000 in USDC.
 
-You are the Lentera Keeper, flying a light-skiff across the Hollow Drift — a dark sea full of void wisps. Collect lumen orbs to feed your lantern, burn wisps with your aura and lance, dash through danger, and pick one of three blessings between waves. Survive all 10 waves and the dawn breaks; lose all 3 hearts and the light fades.
+You are the Lentera Keeper, flying a light-skiff across the Hollow Drift — a dark sea full of void wisps. Collect lumen orbs to feed your lantern, burn wisps with your aura and lance, dash through danger, and pick one of three blessings between waves. Four realms shift the drift's colours as the nights deepen — the Indigo Deep, the Ember Reaches, the Verdant Hollow, the Pale Dawn. Four wisp kinds hunt you: drifting wisps, lunging darts, hulking bulwarks, and motes that split into sparks. The Gloom Herald comes on wave 5; the Dusk Sovereign, who throws twelve shards and calls wisps to its side, rules wave 10. Survive all 10 waves and the dawn breaks; lose all 3 hearts and the light fades.
+
+Twelve blessings wait between waves: wide lantern, swift dash, orb magnet, sturdy hull, spare lance, piercing lance, bright pulse, quick lance, twin lance, ricochet lance, ember trail, and herald bane. One-time blessings are never offered twice in a run.
 
 ## Run it
 

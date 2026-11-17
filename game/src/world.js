@@ -26,6 +26,10 @@ export function makePlayer() {
     lanceRecharge: CFG.lanceRechargeSec,
     lanceTimer: 0,
     lancePierce: false,
+    twinLance: false,
+    ricochet: false,
+    emberTrail: false,
+    heraldBane: false,
     magnetRadius: CFG.orbMagnetBase,
     lantern: 0,
     dead: false,
@@ -40,6 +44,7 @@ export function makeWorld(rng) {
     shards: [],
     orbs: [],
     lances: [],
+    trails: [],
     particles: [],
     floaters: [],
     time: 0,
@@ -58,20 +63,35 @@ export function spawnWisp(world, kind, hpMult, speedMult) {
   else if (edge === 1) { x = range(rng, 0, CFG.arenaW); y = CFG.arenaH + 30; }
   else if (edge === 2) { x = -30; y = range(rng, 0, CFG.arenaH); }
   else { x = CFG.arenaW + 30; y = range(rng, 0, CFG.arenaH); }
-  const hp = CFG.wispHp * hpMult;
+  const table = CFG.wispKinds[kind] || CFG.wispKinds.drifter;
+  const isElite = kind === 'herald' || kind === 'sovereign';
+  const hp = isElite
+    ? CFG.wispHp * hpMult
+    : CFG.wispHp * table.hp * hpMult;
+  const radius = kind === 'herald' ? CFG.heraldRadius
+    : kind === 'sovereign' ? CFG.sovereignRadius
+    : CFG.wispRadius * table.radius * range(rng, 0.85, 1.25);
+  const speed = isElite
+    ? (kind === 'sovereign' ? CFG.sovereignSpeed : CFG.heraldSpeed) * speedMult
+    : CFG.wispSpeed * table.speed * speedMult * range(rng, 0.9, 1.1);
   world.wisps.push({
-    kind: kind || 'wisp',
+    kind: kind || 'drifter',
     x, y,
     vx: 0, vy: 0,
     hp,
     maxHp: hp,
-    radius: kind === 'herald' ? CFG.heraldRadius : CFG.wispRadius * range(rng, 0.85, 1.25),
-    speed: CFG.wispSpeed * speedMult * range(rng, 0.9, 1.1),
+    radius,
+    speed,
     wobble: range(rng, 0, Math.PI * 2),
     wobbleSpeed: range(rng, 1.2, 2.6),
     touchCd: 0,
-    radialTimer: CFG.heraldRadialSec,
-    hue: kind === 'herald' ? 288 : 315,
+    radialTimer: kind === 'sovereign' ? CFG.sovereignRadialSec : CFG.heraldRadialSec,
+    summonTimer: CFG.sovereignSummonSec,
+    hue: isElite ? (kind === 'sovereign' ? 45 : 288) : table.hue,
+    score: isElite
+      ? (kind === 'sovereign' ? CFG.sovereignScore : CFG.heraldScore)
+      : table.score,
+    orbCount: isElite ? CFG.heraldOrbs : table.orbs,
   });
 }
 
@@ -128,13 +148,22 @@ function killWisp(world, index, onEvent) {
   const w = world.wisps[index];
   world.wisps.splice(index, 1);
   world.kills += 1;
-  const orbs = w.kind === 'herald' ? CFG.heraldOrbs : (world.rng() < 0.6 ? 2 : 1);
-  for (let i = 0; i < orbs; i += 1) spawnOrb(world, w.x, w.y, w.kind === 'herald');
+  const orbs = w.kind === 'herald' || w.kind === 'sovereign' ? CFG.heraldOrbs : w.orbCount;
+  for (let i = 0; i < orbs; i += 1) spawnOrb(world, w.x, w.y, w.kind === 'herald' || w.kind === 'sovereign');
   burst(world, w.x, w.y, '#e08cff', 14, 200);
   burst(world, w.x, w.y, '#7df3ff', 6, 140);
-  floater(world, w.x, w.y - 10, `+${w.kind === 'herald' ? CFG.heraldScore : CFG.wispScore}`, '#c9f7ff');
+  floater(world, w.x, w.y - 10, `+${w.score}`, '#c9f7ff');
+  // A mote pops into two sparks that scatter and keep hunting.
+  if (w.kind === 'mote') {
+    for (let i = 0; i < 2; i += 1) {
+      spawnWisp(world, 'spark', 1, 1);
+      const s = world.wisps[world.wisps.length - 1];
+      s.x = w.x + (i === 0 ? -14 : 14);
+      s.y = w.y;
+    }
+  }
   if (onEvent) onEvent('wisp-down', w);
-  return w.kind === 'herald' ? CFG.heraldScore : CFG.wispScore;
+  return w.score;
 }
 
 // One fixed step of the world. input carries the movement keys, aim and
@@ -194,6 +223,16 @@ export function stepWorld(world, input, dt, combo) {
     if (input.onEvent) input.onEvent('dash');
   }
 
+  // Ember trail: while dashing, the skiff sheds burning embers that
+  // scorch any wisp that drifts through them.
+  if (p.emberTrail && p.dashTime > 0) {
+    p.trailTimer = (p.trailTimer || 0) - dt;
+    if (p.trailTimer <= 0) {
+      p.trailTimer = 0.03;
+      world.trails.push({ x: p.x, y: p.y, life: 2.5, maxLife: 2.5 });
+    }
+  }
+
   // --- lance recharge and firing ---
   if (p.lanceAmmo < p.lanceMaxAmmo) {
     p.lanceTimer += dt;
@@ -206,15 +245,20 @@ export function stepWorld(world, input, dt, combo) {
   }
   if (input.fire && p.lanceAmmo > 0 && !p.dead) {
     p.lanceAmmo -= 1;
-    world.lances.push({
-      x: p.x + Math.cos(p.angle) * 22,
-      y: p.y + Math.sin(p.angle) * 22,
-      vx: Math.cos(p.angle) * CFG.lanceSpeed,
-      vy: Math.sin(p.angle) * CFG.lanceSpeed,
-      life: 1.1,
-      pierce: p.lancePierce,
-      hits: new Set(),
-    });
+    const spread = p.twinLance ? [-0.12, 0.12] : [0];
+    for (const off of spread) {
+      const a = p.angle + off;
+      world.lances.push({
+        x: p.x + Math.cos(a) * 22,
+        y: p.y + Math.sin(a) * 22,
+        vx: Math.cos(a) * CFG.lanceSpeed,
+        vy: Math.sin(a) * CFG.lanceSpeed,
+        life: 1.1,
+        pierce: p.lancePierce,
+        bounced: false,
+        hits: new Set(),
+      });
+    }
     burst(world, p.x + Math.cos(p.angle) * 24, p.y + Math.sin(p.angle) * 24, '#ffe9a3', 4, 120);
     if (input.onEvent) input.onEvent('shoot');
   }
@@ -224,7 +268,8 @@ export function stepWorld(world, input, dt, combo) {
   for (let i = world.wisps.length - 1; i >= 0; i -= 1) {
     const w = world.wisps[i];
     if (dist2(w.x, w.y, p.x, p.y) < auraR2) {
-      w.hp -= p.auraDamage * dt;
+      const bane = p.heraldBane && (w.kind === 'herald' || w.kind === 'sovereign') ? 2 : 1;
+      w.hp -= p.auraDamage * bane * dt;
       if (world.rng() < dt * 6) {
         world.particles.push({
           x: w.x + range(world.rng, -w.radius, w.radius),
@@ -246,14 +291,44 @@ export function stepWorld(world, input, dt, combo) {
     let dead = l.life <= 0 || l.x < -20 || l.x > CFG.arenaW + 20 || l.y < -20 || l.y > CFG.arenaH + 20;
     if (!dead) {
       for (let j = world.wisps.length - 1; j >= 0; j -= 1) {
+        // A ricochet kill below can shrink the array faster than j
+        // falls, so an index past the end is skipped, not read.
         const w = world.wisps[j];
+        if (!w) continue;
         if (l.hits.has(w)) continue;
         const rr = w.radius + CFG.lanceRadius;
         if (dist2(l.x, l.y, w.x, w.y) < rr * rr) {
-          w.hp -= CFG.lanceDamage;
+          const bane = p.heraldBane && (w.kind === 'herald' || w.kind === 'sovereign') ? 2 : 1;
+          w.hp -= CFG.lanceDamage * bane;
           l.hits.add(w);
           burst(world, l.x, l.y, '#ffe9a3', 6, 160);
-          if (w.hp <= 0) gained += killWisp(world, j, input.onEvent);
+          // Ricochet: the bolt leaps once to the nearest other wisp.
+          if (p.ricochet && !l.bounced) {
+            l.bounced = true;
+            let other = null;
+            let otherD = 220 * 220;
+            for (const cand of world.wisps) {
+              if (cand === w || l.hits.has(cand)) continue;
+              const dd = dist2(l.x, l.y, cand.x, cand.y);
+              if (dd < otherD) { otherD = dd; other = cand; }
+            }
+            if (other) {
+              const obane = p.heraldBane && (other.kind === 'herald' || other.kind === 'sovereign') ? 2 : 1;
+              other.hp -= CFG.lanceDamage * obane;
+              l.hits.add(other);
+              burst(world, other.x, other.y, '#ffe9a3', 6, 160);
+              if (other.hp <= 0) {
+                const oi = world.wisps.indexOf(other);
+                if (oi >= 0) gained += killWisp(world, oi, input.onEvent);
+              }
+            }
+          }
+          if (w.hp <= 0) {
+            // Look the wisp up by reference: a ricochet kill above may
+            // have shifted the array, so the old index is not trusted.
+            const wi = world.wisps.indexOf(w);
+            if (wi >= 0) gained += killWisp(world, wi, input.onEvent);
+          }
           if (!l.pierce) { dead = true; break; }
         }
       }
@@ -280,13 +355,29 @@ export function stepWorld(world, input, dt, combo) {
       w.touchCd = 1;
       hurtPlayer(world, CFG.wispTouchDamage, input.onEvent);
     }
-    // Herald radial burst.
-    if (w.kind === 'herald') {
+    // Ember trail: wisps that drift through the embers catch fire.
+    for (const t of world.trails) {
+      const tr = 26 + w.radius;
+      if (dist2(w.x, w.y, t.x, t.y) < tr * tr) {
+        w.hp -= 30 * dt;
+        if (w.hp <= 0) {
+          const wi = world.wisps.indexOf(w);
+          if (wi >= 0) gained += killWisp(world, wi, input.onEvent);
+          break;
+        }
+      }
+    }
+    if (w.hp <= 0) continue;
+    // Herald radial burst; the Sovereign throws twelve shards at once
+    // and calls fresh wisps to its side every few seconds.
+    if (w.kind === 'herald' || w.kind === 'sovereign') {
+      const isSov = w.kind === 'sovereign';
       w.radialTimer -= dt;
       if (w.radialTimer <= 0) {
-        w.radialTimer = CFG.heraldRadialSec;
-        for (let k = 0; k < 10; k += 1) {
-          const a = (k / 10) * Math.PI * 2 + world.rng() * 0.3;
+        w.radialTimer = isSov ? CFG.sovereignRadialSec : CFG.heraldRadialSec;
+        const count = isSov ? CFG.sovereignShards : 10;
+        for (let k = 0; k < count; k += 1) {
+          const a = (k / count) * Math.PI * 2 + world.rng() * 0.3;
           world.shards.push({
             x: w.x, y: w.y,
             vx: Math.cos(a) * CFG.heraldShardSpeed,
@@ -296,6 +387,19 @@ export function stepWorld(world, input, dt, combo) {
         }
         world.shake = Math.max(world.shake, 5);
         if (input.onEvent) input.onEvent('herald-shot');
+      }
+      if (isSov) {
+        w.summonTimer -= dt;
+        if (w.summonTimer <= 0 && world.wisps.length < 40) {
+          w.summonTimer = CFG.sovereignSummonSec;
+          for (let k = 0; k < CFG.sovereignSummonCount; k += 1) {
+            spawnWisp(world, 'drifter', 1, 1);
+            const s = world.wisps[world.wisps.length - 1];
+            s.x = w.x + (k - 1) * 70;
+            s.y = w.y + 40;
+          }
+          if (input.onEvent) input.onEvent('herald-shot');
+        }
       }
     }
   }
@@ -346,6 +450,12 @@ export function stepWorld(world, input, dt, combo) {
     } else if (o.life <= 0) {
       world.orbs.splice(i, 1);
     }
+  }
+
+  // --- ember trails fade ---
+  for (let i = world.trails.length - 1; i >= 0; i -= 1) {
+    world.trails[i].life -= dt;
+    if (world.trails[i].life <= 0) world.trails.splice(i, 1);
   }
 
   // --- particles, floaters, shake, flash ---

@@ -29,6 +29,17 @@ export function isHeraldWave(wave) {
   return wave % 5 === 0;
 }
 
+// The night's mix: drifters always, darts from wave 3, bulwarks from
+// wave 4, motes from wave 6. Drawn from the seeded rng, so the same
+// seed always deals the same night.
+export function pickKind(rng, wave) {
+  const r = rng();
+  if (wave >= 6 && r < 0.15) return 'mote';
+  if (wave >= 4 && r < 0.3) return 'bulwark';
+  if (wave >= 3 && r < 0.5) return 'dart';
+  return 'drifter';
+}
+
 export function startWave(director, wave, title) {
   director.wave = wave;
   director.toSpawn = waveSize(wave);
@@ -44,11 +55,17 @@ export function stepDirector(director, world, dt) {
   if (director.bannerTimer > 0) director.bannerTimer -= dt;
   if (director.betweenWaves) return false;
 
-  // The Herald arrives halfway through its wave.
+  // The Herald arrives halfway through its wave. Wave 10 belongs to
+  // the Dusk Sovereign instead — the final night's master.
   if (isHeraldWave(director.wave) && !director.heraldSpawned && director.spawned >= Math.floor(director.toSpawn / 2)) {
     director.heraldSpawned = true;
-    spawnWisp(world, 'herald', CFG.heraldHpMult * waveGrowth(director.wave), 0.7);
-    director.banner = 'THE GLOOM HERALD';
+    if (director.wave >= 10) {
+      spawnWisp(world, 'sovereign', CFG.sovereignHpMult * waveGrowth(director.wave), 0.7);
+      director.banner = 'THE DUSK SOVEREIGN';
+    } else {
+      spawnWisp(world, 'herald', CFG.heraldHpMult * waveGrowth(director.wave), 0.7);
+      director.banner = 'THE GLOOM HERALD';
+    }
     director.bannerTimer = 2.6;
   }
 
@@ -58,7 +75,7 @@ export function stepDirector(director, world, dt) {
       director.spawnTimer = CFG.spawnIntervalSec;
       director.spawned += 1;
       const g = waveGrowth(director.wave);
-      spawnWisp(world, 'wisp', g, g);
+      spawnWisp(world, pickKind(world.rng, director.wave), g, g);
     }
   }
 

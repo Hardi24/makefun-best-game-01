@@ -28,7 +28,8 @@ export function autopilot(game) {
   for (const w of world.wisps) {
     const d = Math.hypot(w.x - p.x, w.y - p.y);
     if (w.kind === 'herald' && d < heraldD) { heraldD = d; herald = w; }
-    const priority = w.kind === 'herald' ? d * 0.5 : d;
+    // Darts close in fast: shoot them first when they are near.
+    const priority = w.kind === 'herald' ? d * 0.5 : w.kind === 'dart' && d < 200 ? d * 0.6 : d;
     if (priority < nearPriority) { nearPriority = priority; nearD = d; near = w; }
   }
   // The Herald is the wave's gate: aim at it whenever it is on the
@@ -154,7 +155,7 @@ export function autopilot(game) {
 // Pick the upgrade the autopilot wants most right now.
 function pickCard(game) {
   const p = game.world.player;
-  const want = ['sturdy-hull', 'wide-lantern', 'piercing-lance', 'bright-pulse', 'spare-lance', 'swift-dash', 'orb-magnet', 'quick-lance'];
+  const want = ['sturdy-hull', 'wide-lantern', 'twin-lance', 'piercing-lance', 'ricochet-lance', 'bright-pulse', 'ember-trail', 'herald-bane', 'spare-lance', 'swift-dash', 'orb-magnet', 'quick-lance'];
   for (const id of want) {
     const i = game.upgradeCards.findIndex((c) => c.id === id);
     if (i >= 0) {
@@ -179,13 +180,50 @@ export function driveShot(game, ctx, mode) {
   game.shotMode = mode;
 
   if (mode === 'start') {
-    // Five seconds of drifting dark behind the title screen.
+    // Five seconds of drifting dark behind the title screen, with a
+    // few wisps and orbs adrift so the title is not an empty sky.
     for (let i = 0; i < 300; i += 1) stepGame(game, 1 / 60);
+    const ambient = game.world;
+    const kinds = ['drifter', 'dart', 'bulwark', 'mote'];
+    for (let i = 0; i < 7; i += 1) {
+      ambient.wisps.push({
+        kind: kinds[i % kinds.length],
+        x: 120 + ((i * 173) % 1040),
+        y: 90 + ((i * 211) % 540),
+        vx: 0, vy: 0,
+        hp: 30, maxHp: 30,
+        radius: 16 + (i % 3) * 4,
+        speed: 0, wobble: i * 1.1, wobbleSpeed: 1.6,
+        touchCd: 0, radialTimer: 5, summonTimer: 8,
+        hue: [315, 32, 265, 150][i % 4],
+        score: 25, orbCount: 1,
+      });
+    }
+    for (let i = 0; i < 10; i += 1) {
+      ambient.orbs.push({
+        x: 80 + ((i * 251) % 1120),
+        y: 120 + ((i * 167) % 480),
+        vx: 0, vy: 0, value: 1, life: 14, bob: i * 0.7,
+      });
+    }
   } else if (mode === 'play') {
     startRun(game);
-    // 22 seconds in: wave 2 at its busiest — wisps, orbs and a lance
-    // on screen, the skiff mid-arena (measured in the headless sim).
-    runSteps(game, ctx, 22 * 60);
+    // Play into the middle waves: darts, bulwarks and motes on screen,
+    // a new realm behind them, the skiff mid-fight — the game at its
+    // busiest, not a quiet wave 2. Freeze only on a good frame: most
+    // of the wave spawned, the skiff near the centre, hearts to spare.
+    // If no good frame comes by wave 10, take the Sovereign's arrival.
+    for (let i = 0; i < 400 * 60; i += 1) {
+      if (game.state === 'upgrade') chooseUpgrade(game, pickCard(game));
+      stepGame(game, 1 / 60);
+      if (game.state === 'playing' && game.director.wave >= 6 && game.director.wave < 10 && game.director.spawned >= 14) {
+        const p = game.world.player;
+        const nearCentre = Math.abs(p.x - CFG.arenaW / 2) < 360 && Math.abs(p.y - CFG.arenaH / 2) < 240;
+        if (nearCentre && p.hearts >= 2 && game.world.wisps.length >= 7 && game.world.orbs.length >= 2) break;
+      }
+      if (game.director.wave >= 10 && game.world.wisps.some((w) => w.kind === 'sovereign')) break;
+      if (game.state === 'victory' || game.state === 'gameover') break;
+    }
     if (game.state === 'upgrade') chooseUpgrade(game, pickCard(game));
   } else if (mode === 'upgrade') {
     startRun(game);

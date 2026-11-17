@@ -1,7 +1,7 @@
 // All drawing: the drifting dark, the skiff, wisps, orbs, the HUD and
 // every screen (title, upgrade choice, victory, defeat, pause). Nothing
 // here changes game state; it only paints what the world holds.
-import { CFG, WAVE_TITLES } from './config.js';
+import { CFG, realmForWave } from './config.js';
 import { makeRng } from './random.js';
 
 const INK = '#e8f4ff';
@@ -29,7 +29,7 @@ export function makeBackdrop(seed) {
       x: rng() * CFG.arenaW,
       y: rng() * CFG.arenaH,
       r: 140 + rng() * 220,
-      hue: rng() < 0.5 ? 262 : 190,
+      slot: i % 2,
       alpha: 0.05 + rng() * 0.06,
     });
   }
@@ -46,19 +46,21 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawBackground(ctx, backdrop, time, shakeX, shakeY) {
+function drawBackground(ctx, backdrop, time, shakeX, shakeY, wave) {
+  const realm = realmForWave(Math.max(1, wave || 1));
   ctx.save();
   ctx.translate(shakeX, shakeY);
   const g = ctx.createLinearGradient(0, 0, 0, CFG.arenaH);
-  g.addColorStop(0, '#070a1d');
-  g.addColorStop(0.55, '#0b1030');
-  g.addColorStop(1, '#12082a');
+  g.addColorStop(0, realm.top);
+  g.addColorStop(0.55, realm.mid);
+  g.addColorStop(1, realm.bot);
   ctx.fillStyle = g;
   ctx.fillRect(-20, -20, CFG.arenaW + 40, CFG.arenaH + 40);
 
   for (const n of backdrop.nebulae) {
+    const hue = realm.nebula[n.slot];
     const ng = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
-    ng.addColorStop(0, `hsla(${n.hue}, 70%, 55%, ${n.alpha})`);
+    ng.addColorStop(0, `hsla(${hue}, 70%, 55%, ${n.alpha})`);
     ng.addColorStop(1, 'hsla(260, 70%, 50%, 0)');
     ctx.fillStyle = ng;
     ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
@@ -167,17 +169,54 @@ function drawWisp(ctx, w, time) {
   ctx.arc(-ex, ey, r * 0.07, 0, Math.PI * 2);
   ctx.arc(ex, ey, r * 0.07, 0, Math.PI * 2);
   ctx.fill();
-  if (w.kind === 'herald') {
-    ctx.strokeStyle = 'rgba(255, 209, 102, 0.9)';
+  // Kind marks: a dart trails a spike, a bulwark wears a second ring,
+  // a mote carries three bright seeds inside it.
+  if (w.kind === 'dart') {
+    ctx.strokeStyle = `hsla(${w.hue}, 95%, 65%, 0.9)`;
     ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.4);
+    ctx.lineTo(0, -r * 1.5);
+    ctx.stroke();
+  } else if (w.kind === 'bulwark') {
+    ctx.strokeStyle = `hsla(${w.hue}, 85%, 60%, 0.55)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.25, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (w.kind === 'mote' || w.kind === 'spark') {
+    ctx.fillStyle = `hsla(${w.hue}, 95%, 75%, 0.95)`;
+    for (let i = 0; i < 3; i += 1) {
+      const a = (i / 3) * Math.PI * 2 + time * 0.8;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * r * 0.45, Math.sin(a) * r * 0.45, r * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  if (w.kind === 'herald' || w.kind === 'sovereign') {
+    const isSov = w.kind === 'sovereign';
+    ctx.strokeStyle = isSov ? 'rgba(255, 209, 102, 1)' : 'rgba(255, 209, 102, 0.9)';
+    ctx.lineWidth = isSov ? 3.5 : 2.5;
     ctx.beginPath();
     ctx.arc(0, 0, r + 9 + 3 * Math.sin(time * 3), 0, Math.PI * 2);
     ctx.stroke();
-    // Health bar above the Herald.
-    const bw = 90;
+    if (isSov) {
+      // A crown of light above the Sovereign.
+      ctx.strokeStyle = 'rgba(255, 209, 102, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.55, -r - 8);
+      ctx.lineTo(-r * 0.3, -r - 22);
+      ctx.lineTo(0, -r - 10);
+      ctx.lineTo(r * 0.3, -r - 22);
+      ctx.lineTo(r * 0.55, -r - 8);
+      ctx.stroke();
+    }
+    // Health bar above the elite.
+    const bw = isSov ? 120 : 90;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(-bw / 2, -r - 22, bw, 7);
-    ctx.fillStyle = RED;
+    ctx.fillStyle = isSov ? GOLD : RED;
     ctx.fillRect(-bw / 2, -r - 22, bw * Math.max(0, w.hp / w.maxHp), 7);
   } else if (w.hp < w.maxHp) {
     const bw = 34;
@@ -204,6 +243,19 @@ function drawOrb(ctx, o) {
   ctx.beginPath();
   ctx.arc(o.x, o.y + bob, r * 0.55, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawTrails(ctx, world) {
+  for (const t of world.trails) {
+    const a = Math.max(0, t.life / t.maxLife) * 0.5;
+    const g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, 26);
+    g.addColorStop(0, `rgba(255, 140, 60, ${a})`);
+    g.addColorStop(1, 'rgba(255, 140, 60, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawLance(ctx, l) {
@@ -249,18 +301,21 @@ function drawHud(ctx, game) {
   roundRect(ctx, 28, 64, 150 * (p.lantern / 100), 10, 5);
   ctx.fill();
 
-  // Top-center: wave + score.
+  // Top-center: wave + score + realm.
   ctx.textAlign = 'center';
   ctx.fillStyle = INK;
   ctx.font = '700 22px system-ui, sans-serif';
   ctx.fillText(`WAVE ${Math.max(1, game.director.wave)} / ${CFG.totalWaves}`, w / 2, 34);
+  ctx.fillStyle = DIM;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText(realmForWave(Math.max(1, game.director.wave)).name, w / 2, 50);
   ctx.font = '700 26px system-ui, sans-serif';
   ctx.fillStyle = GOLD;
-  ctx.fillText(`${game.score}`, w / 2, 64);
+  ctx.fillText(`${game.score}`, w / 2, 78);
   if (game.combo.mult > 1) {
     ctx.fillStyle = CYAN;
     ctx.font = '700 16px system-ui, sans-serif';
-    ctx.fillText(`COMBO x${game.combo.mult}`, w / 2, 86);
+    ctx.fillText(`COMBO x${game.combo.mult}`, w / 2, 100);
   }
 
   // Top-right: kills + mute hint.
@@ -307,11 +362,9 @@ function drawHud(ctx, game) {
     ctx.fillStyle = GOLD;
     ctx.font = '700 34px system-ui, sans-serif';
     ctx.fillText(game.director.banner, w / 2, 150);
-    if (game.director.wave > 0) {
-      ctx.fillStyle = DIM;
-      ctx.font = '16px system-ui, sans-serif';
-      ctx.fillText(WAVE_TITLES[game.director.wave - 1] || '', w / 2, 178);
-    }
+    ctx.fillStyle = DIM;
+    ctx.font = '16px system-ui, sans-serif';
+    ctx.fillText(realmForWave(Math.max(1, game.director.wave)).name, w / 2, 178);
     ctx.globalAlpha = 1;
   }
 
@@ -346,6 +399,9 @@ function drawTitle(ctx, game) {
   ctx.fillStyle = DIM;
   ctx.font = '18px system-ui, sans-serif';
   ctx.fillText('Gather lumen orbs. Burn the wisps. Survive 10 waves until dawn.', w / 2, 256);
+  ctx.fillStyle = GOLD;
+  ctx.font = '15px system-ui, sans-serif';
+  ctx.fillText('4 realms · dart, bulwark & mote wisps · 12 blessings · 2 heralds', w / 2, 282);
   ctx.fillStyle = CYAN;
   ctx.font = '16px system-ui, sans-serif';
   ctx.fillText('WASD / arrows — move      Mouse — aim      Click — lance shot', w / 2, 316);
@@ -493,11 +549,12 @@ export function render(ctx, game, backdrop) {
   };
   const shakeX = shakeMag > 0 ? (hash(frameNo) - 0.5) * shakeMag : 0;
   const shakeY = shakeMag > 0 ? (hash(frameNo + 57) - 0.5) * shakeMag : 0;
-  drawBackground(ctx, backdrop, world.time, shakeX, shakeY);
+  drawBackground(ctx, backdrop, world.time, shakeX, shakeY, game.director.wave);
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
   for (const o of world.orbs) drawOrb(ctx, o);
+  drawTrails(ctx, world);
   for (const w of world.wisps) drawWisp(ctx, w, world.time);
   for (const s of world.shards) {
     ctx.fillStyle = '#ff8fb0';

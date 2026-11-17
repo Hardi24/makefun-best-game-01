@@ -39,6 +39,7 @@ export function makeGame(seed) {
     state: 'title',
     score: 0,
     upgradeCards: [],
+    takenUpgrades: [],
     hoverCard: -1,
     seed,
     backdrop: makeBackdrop(seed),
@@ -72,7 +73,7 @@ function startRun(game) {
 }
 
 function openUpgrade(game) {
-  game.upgradeCards = drawUpgrades(game.rng, 3);
+  game.upgradeCards = drawUpgrades(game.rng, 3, game.takenUpgrades);
   game.hoverCard = -1;
   game.state = 'upgrade';
   sfx.upgrade(game.audio);
@@ -82,6 +83,7 @@ function chooseUpgrade(game, index) {
   const card = game.upgradeCards[index];
   if (!card) return;
   applyUpgrade(game.world.player, card);
+  game.takenUpgrades.push(card.id);
   const next = game.director.wave + 1;
   if (next > CFG.totalWaves) {
     endRun(game, true);
